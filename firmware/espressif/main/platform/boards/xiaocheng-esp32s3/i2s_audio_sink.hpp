@@ -2,6 +2,7 @@
 
 #include "driver/i2c_master.h"
 #include "esp_err.h"
+#include "platform/audio/audio_output_peripheral.hpp"
 #include "platform/audio/es8311_i2s_audio_sink.hpp"
 
 namespace micropixel::platform::buses {
@@ -15,12 +16,22 @@ class BoardHardware;
 // ES8311 over I2S0. The NS4152 amplifier enable lives on XL9535 P0.3 and is
 // routed through the shared I2cExecutor; audio power (P1.4) and LDO (P0.7)
 // are switched on by BoardHardware::Initialize() before the codec probe.
-class I2sAudioSink final {
+class I2sAudioSink final : public audio::AudioOutputPeripheral {
    public:
     explicit I2sAudioSink(BoardHardware& hardware) : hardware_(&hardware) {}
 
     [[nodiscard]] esp_err_t Configure(i2c_master_bus_handle_t bus, buses::I2cExecutor& executor);
-    [[nodiscard]] uint32_t SampleRate() const { return sink_.SampleRate(); }
+    [[nodiscard]] esp_err_t Initialize() override { return sink_.Initialize(); }
+    [[nodiscard]] esp_err_t Start(int32_t* scratch_frames, uint32_t frame_count) override {
+        return sink_.Start(scratch_frames, frame_count);
+    }
+    [[nodiscard]] esp_err_t Write(const int32_t* frames, uint32_t frame_count) override {
+        return sink_.Write(frames, frame_count);
+    }
+    [[nodiscard]] esp_err_t Stop() override { return sink_.Stop(); }
+    void Shutdown() override { sink_.Shutdown(); }
+    [[nodiscard]] const char* Name() const override { return sink_.Name(); }
+    [[nodiscard]] uint32_t SampleRate() const override { return sink_.SampleRate(); }
 
    private:
     static esp_err_t SetAmplifier(void* context, bool enabled);
