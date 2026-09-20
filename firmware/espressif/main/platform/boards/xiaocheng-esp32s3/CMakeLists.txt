@@ -4,6 +4,7 @@ list(APPEND micropixel_sources
     "platform/boards/xiaocheng-esp32s3/i2s_audio_sink.cpp"
     "platform/boards/xiaocheng-esp32s3/matrix_key_input.cpp"
     "platform/boards/xiaocheng-esp32s3/platform.cpp"
+    "platform/input/esp_lcd_touch_input.cpp"
     "platform/transports/development_display_control.cpp"
     "platform/transports/usb_serial_jtag_local_control.cpp"
 )
