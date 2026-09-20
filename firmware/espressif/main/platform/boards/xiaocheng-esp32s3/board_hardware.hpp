@@ -23,7 +23,7 @@ class BoardHardware final {
     [[nodiscard]] i2c_master_bus_handle_t I2cBus() const { return i2c_bus_; }
 
    private:
-    [[nodiscard]] esp_err_t WriteRegister(uint8_t address, uint8_t value);
+    [[nodiscard]] esp_err_t WriteExpanderRegister(uint8_t address, uint8_t value);
 
     i2c_master_bus_handle_t i2c_bus_{};
     i2c_master_dev_handle_t expander_{};

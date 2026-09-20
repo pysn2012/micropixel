@@ -45,13 +45,13 @@ esp_err_t BoardHardware::Initialize() {
     // high, audio power on, LDO on, amplifier on), then enable those output
     // directions. Audio needs all three XL9535 rails: P1.4, P0.7 and P0.3.
     port0_output_ = kXl9535OutputPort0Preset;
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535OutputPort0, port0_output_), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort0, port0_output_), kTag,
                         "preset XL9535 port 0 outputs failed");
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535OutputPort1, kXl9535OutputPort1Preset), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort1, kXl9535OutputPort1Preset), kTag,
                         "preset XL9535 port 1 outputs failed");
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535ConfigPort0, kXl9535ConfigPort0Value), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535ConfigPort0, kXl9535ConfigPort0Value), kTag,
                         "configure XL9535 port 0 directions failed");
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535ConfigPort1, kXl9535ConfigPort1Value), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535ConfigPort1, kXl9535ConfigPort1Value), kTag,
                         "configure XL9535 port 1 directions failed");
 
     ledc_timer_config_t timer_config{};
@@ -89,13 +89,13 @@ esp_err_t BoardHardware::PulseLcdReset() {
     if (expander_ == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset)), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset)), kTag,
                         "hold LCD reset failed");
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset &
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset &
                                                                                     ~kXl9535LcdResetBit)),
                         kTag, "assert LCD reset failed");
     vTaskDelay(pdMS_TO_TICKS(10U));
-    ESP_RETURN_ON_ERROR(WriteRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset)), kTag,
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort1, static_cast<uint8_t>(kXl9535OutputPort1Preset)), kTag,
                         "release LCD reset failed");
     vTaskDelay(pdMS_TO_TICKS(120U));
     return ESP_OK;
@@ -125,7 +125,7 @@ esp_err_t BoardHardware::SetAmplifier(bool enabled, buses::I2cExecutor& executor
                                                             kXl9535AmplifierEnableBit)
                                      : static_cast<uint8_t>(requested.hardware->port0_output_ &
                                                             ~kXl9535AmplifierEnableBit);
-            const esp_err_t status = requested.hardware->WriteRegister(kXl9535OutputPort0, next);
+            const esp_err_t status = requested.hardware->WriteExpanderRegister(kXl9535OutputPort0, next);
             if (status == ESP_OK) {
                 requested.hardware->port0_output_ = next;
             }
@@ -134,7 +134,7 @@ esp_err_t BoardHardware::SetAmplifier(bool enabled, buses::I2cExecutor& executor
         &request);
 }
 
-esp_err_t BoardHardware::WriteRegister(uint8_t address, uint8_t value) {
+esp_err_t BoardHardware::WriteExpanderRegister(uint8_t address, uint8_t value) {
     if (expander_ == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
