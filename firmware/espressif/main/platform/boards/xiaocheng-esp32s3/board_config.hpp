@@ -6,6 +6,7 @@
 #include "device/contracts/input.hpp"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "driver/i2s_std.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 
