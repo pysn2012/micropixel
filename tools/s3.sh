@@ -9,9 +9,12 @@ szpi_port_override="${SZPI_S3_PORT:-}"
 szpi_baud_override="${SZPI_S3_BAUD:-}"
 cores3_port_override="${CORES3_S3_PORT:-}"
 cores3_baud_override="${CORES3_S3_BAUD:-}"
+xiaocheng_port_override="${XIAOCHENG_S3_PORT:-}"
+xiaocheng_baud_override="${XIAOCHENG_S3_BAUD:-}"
 s3_host_build_dir_override="${S3_HOST_BUILD_DIR:-}"
 szpi_host_build_dir_override="${SZPI_S3_HOST_BUILD_DIR:-}"
 cores3_host_build_dir_override="${CORES3_S3_HOST_BUILD_DIR:-}"
+xiaocheng_host_build_dir_override="${XIAOCHENG_S3_HOST_BUILD_DIR:-}"
 s3_apps_output_dir_override="${S3_APPS_OUTPUT_DIR:-}"
 xtensa_wamrc_override="${XTENSA_WAMRC:-}"
 remote_control_host_override="${MICROPIXEL_REMOTE_CONTROL_HOST:-}"
@@ -54,6 +57,15 @@ fi
 if [[ -n "$cores3_host_build_dir_override" ]]; then
     CORES3_S3_HOST_BUILD_DIR="$cores3_host_build_dir_override"
 fi
+if [[ -n "$xiaocheng_port_override" ]]; then
+    XIAOCHENG_S3_PORT="$xiaocheng_port_override"
+fi
+if [[ -n "$xiaocheng_baud_override" ]]; then
+    XIAOCHENG_S3_BAUD="$xiaocheng_baud_override"
+fi
+if [[ -n "$xiaocheng_host_build_dir_override" ]]; then
+    XIAOCHENG_S3_HOST_BUILD_DIR="$xiaocheng_host_build_dir_override"
+fi
 if [[ -n "$s3_apps_output_dir_override" ]]; then
     S3_APPS_OUTPUT_DIR="$s3_apps_output_dir_override"
 fi
@@ -87,7 +99,7 @@ usage() {
     cat <<'EOF'
 Usage: bash tools/s3.sh COMMAND [BOARD] [PORT] [--reset]
 
-Boards: box3 (default), szpi, cores3
+Boards: box3 (default), szpi, cores3, xiaocheng
 
 Common ESP32-S3 commands:
   build-null          Compile the ESP32-S3 hardware-independent Null gate.
@@ -363,6 +375,14 @@ select_board() {
             board_build_dir="$cores3_host_build_dir"
             board_defaults=(sdkconfig.s3.defaults sdkconfig.s3-cores3.defaults)
             board_baud="${CORES3_S3_BAUD:-921600}"
+            ;;
+        xiaocheng | xiaocheng-esp32s3)
+            board_name="xiaocheng"
+            board_title="Xiaocheng ESP32-S3"
+            board_profile="xiaocheng-esp32s3"
+            board_build_dir="$xiaocheng_host_build_dir"
+            board_defaults=(sdkconfig.s3.defaults sdkconfig.s3-xiaocheng.defaults)
+            board_baud="${XIAOCHENG_S3_BAUD:-921600}"
             ;;
         *)
             echo "Unknown ESP32-S3 board: $1 (expected box3, szpi, or cores3)" >&2

@@ -176,6 +176,16 @@ menu "MicroPixel board backends"
             BOOT key, expansion GPIO, Guest Graphics and App Hall. Camera,
             microphone and SD card remain outside the board profile.
 
+    config MICROPIXEL_BOARD_XIAOCHENG_ESP32S3
+        bool "Xiaocheng ESP32-S3 board profile"
+        depends on IDF_TARGET_ESP32S3
+        help
+            Bring up the Xiaocheng ESP32-S3 handheld's ST7789 display (no
+            touch), 2x3 key matrix on native GPIO rows and an XL9535 IO
+            expander, ES8311 audio output, native Wi-Fi, Guest Graphics and
+            App Hall. Microphone, WS2812 LEDs and battery reporting remain
+            outside the board profile.
+
     config MICROPIXEL_BOARD_M5STACK_CORES3
         bool "M5Stack CoreS3 board profile"
         depends on IDF_TARGET_ESP32S3
