@@ -147,7 +147,7 @@ void MatrixKeyInput::EmulateHallPress(bool pressed) {
     const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     if (pressed) {
         confirm_down_ms_ = now_ms;
-        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+        (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                    .id = kTapId,
                                    .x = kFallbackTapX,
                                    .y = kFallbackTapY,
@@ -159,7 +159,7 @@ void MatrixKeyInput::EmulateHallPress(bool pressed) {
     if (held_ms < kFallbackTapHoldMs) {
         vTaskDelay(pdMS_TO_TICKS(kFallbackTapHoldMs - held_ms));
     }
-    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+    (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                .id = kTapId,
                                .x = kFallbackTapX,
                                .y = kFallbackTapY,
@@ -182,7 +182,7 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
     const int32_t start_x = kAnchorX - direction * step / 2;
     const int32_t fast_total = step - 2 * kTrailingPx;
     int32_t x = start_x;
-    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+    (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                .id = kSwipeId,
                                .x = x,
                                .y = kSwipeY,
@@ -191,7 +191,7 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
     for (int32_t i = 1; i <= kFastSteps; ++i) {
         vTaskDelay(pdMS_TO_TICKS(12U));
         x = start_x + direction * fast_total * i / kFastSteps;
-        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+        (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                    .id = kSwipeId,
                                    .x = x,
                                    .y = kSwipeY,
@@ -201,7 +201,7 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
     for (int32_t i = 0; i < 2; ++i) {
         vTaskDelay(pdMS_TO_TICKS(35U));
         x += direction * kTrailingPx;
-        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+        (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                    .id = kSwipeId,
                                    .x = x,
                                    .y = kSwipeY,
@@ -209,7 +209,7 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
                                    .phase = device::TouchPhase::kMove});
     }
     vTaskDelay(pdMS_TO_TICKS(35U));
-    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+    (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                .id = kSwipeId,
                                .x = x,
                                .y = kSwipeY,
