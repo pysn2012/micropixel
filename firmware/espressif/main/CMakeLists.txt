@@ -221,4 +221,4 @@ set_property(SOURCE host/controller/local/local_control_agent.cpp APPEND PROPERT
 set_property(SOURCE host/ui/lvgl/square_common/hall_cover_cache.cpp APPEND PROPERTY COMPILE_OPTIONS -Werror=frame-larger-than=1792)
 set_property(SOURCE platform/transports/usb_serial_jtag_local_control.cpp APPEND PROPERTY COMPILE_OPTIONS -Werror=frame-larger-than=2176)
 set_property(SOURCE platform/boards/szpi-esp32s3/platform.cpp APPEND PROPERTY COMPILE_OPTIONS -Werror=frame-larger-than=2304)
-set_property(SOURCE platform/boards/xiaocheng-esp32s3/platform.cpp APPEND PROPERTY COMPILE_OPTIONS -Werror=frame-larger-than=2304)
+set_property(SOURCE platform/boards/xiaocheng-esp32s3/platform.cpp APPEND PROPERTY COMPILE_OPTIONS -Werror=frame-larger-than=2560)

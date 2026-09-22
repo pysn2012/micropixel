@@ -16,9 +16,11 @@
 #include "platform/boards/xiaocheng-esp32s3/i2s_audio_sink.hpp"
 #include "platform/boards/xiaocheng-esp32s3/matrix_key_input.hpp"
 #include "platform/controllers/brightness_curve.hpp"
+#include "platform/drivers/sensors/lsm6dsl.hpp"
 #include "platform/lvgl/guest_graphics_operations.hpp"
 #include "platform/memory/ext_ram_bss.hpp"
 #include "platform/memory/internal_ram.hpp"
+#include "platform/sensors/polled_inertial_sensor_peripheral.hpp"
 #include "platform/wifi/native_wifi_radio.hpp"
 #include "platform/wifi/wifi_manager.hpp"
 
@@ -47,6 +49,13 @@ class XiaochengEsp32S3Board final : public Board {
               },
               &hardware_),
           system_ui_(state_.ui, presentation_),
+          acceleration_(inertial_, drivers::Lsm6dsl::Kind::kAcceleration),
+          angular_velocity_(inertial_, drivers::Lsm6dsl::Kind::kAngularVelocity),
+          inertial_sensors_(acceleration_, angular_velocity_,
+                            {.log_tag = "xiaocheng_imu",
+                             .model = "LSM6DSL",
+                             .acceleration_timer_name = "xiaocheng_accel",
+                             .angular_velocity_timer_name = "xiaocheng_gyro"}),
           matrix_keys_(hardware_, state_.i2c_executor) {
         state_.guest_graphics.SetPresentationHooks(state_.ui.GuestFrameHooks());
     }
@@ -62,6 +71,9 @@ class XiaochengEsp32S3Board final : public Board {
         ESP_RETURN_ON_ERROR(state_.display_shadow.Initialize(state_.display), kTag,
                             "initialize PSRAM displayed shadow failed");
         ESP_RETURN_ON_ERROR(state_.i2c_executor.Initialize(), kTag, "start shared I2C executor failed");
+        // The LSM6DSL hangs off the shared bus next to the XL9535 and the
+        // codecs; a missing or unreachable chip just skips sensor registration.
+        inertial_sensors_.Initialize(hardware_.I2cBus(), state_.i2c_executor);
         ESP_RETURN_ON_ERROR(state_.guest_graphics.Initialize(state_.display, nullptr), kTag,
                             "initialize RGB565 Guest graphics failed");
 
@@ -108,9 +120,23 @@ class XiaochengEsp32S3Board final : public Board {
         registration.SetWifi(wifi_);
         registration.SetLocalControl(state_.local_control);
         registration.SetSystemUi(system_ui_);
-        ESP_LOGI(kTag, "ready: ST7789 (keys only, no touch), native Wi-Fi, audio=%s",
-                 audio_status == ESP_OK ? "ES8311" : "off");
-        return context.Publish(registration) ? ESP_OK : ESP_ERR_INVALID_STATE;
+        bool registered = true;
+        if (inertial_sensors_.acceleration_available()) {
+            registered =
+                registration.AddSensor(inertial_sensors_, sensors::PolledInertialSensorPeripheral::kAcceleration,
+                                       "Built-in LSM6DSL accelerometer") &&
+                registered;
+        }
+        if (inertial_sensors_.angular_velocity_available()) {
+            registered =
+                registration.AddSensor(inertial_sensors_, sensors::PolledInertialSensorPeripheral::kAngularVelocity,
+                                       "Built-in LSM6DSL gyroscope") &&
+                registered;
+        }
+        ESP_LOGI(kTag, "ready: ST7789 (keys only, no touch), native Wi-Fi, audio=%s, imu=%s",
+                 audio_status == ESP_OK ? "ES8311" : "off",
+                 inertial_sensors_.acceleration_available() ? "LSM6DSL" : "off");
+        return (context.Publish(registration) && registered) ? ESP_OK : ESP_ERR_INVALID_STATE;
     }
 
     void BindBackgroundExecutor(work::BackgroundExecutor& executor) override {
@@ -135,6 +161,10 @@ class XiaochengEsp32S3Board final : public Board {
     board_detail::I2sAudioSink audio_output_;
     common::Landscape320Presentation presentation_;
     host_ui::lvgl::square_common::SquareSystemUi system_ui_;
+    drivers::Lsm6dsl inertial_{};
+    drivers::Lsm6dsl::Vector acceleration_;
+    drivers::Lsm6dsl::Vector angular_velocity_;
+    sensors::PolledInertialSensorPeripheral inertial_sensors_;
     board_detail::MatrixKeyInput matrix_keys_;
     wifi::NativeWifiRadio wifi_radio_{};
     wifi::WifiManager wifi_{wifi_radio_};

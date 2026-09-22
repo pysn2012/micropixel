@@ -103,15 +103,16 @@ esp_err_t EspLcdTouchInput::PrimeEntry(void* context) {
 }
 
 int32_t EspLcdTouchInput::GetInfo(micropixel_input_info_t& info) {
-    if (!Available()) {
-        return MICROPIXEL_STATUS_INTERNAL;
-    }
     info = {};
     info.size = sizeof(info);
     info.capabilities = 0U;
     info.logical_width = width_;
     info.logical_height = height_;
-    info.max_touch_points = max_touch_points_;
+    // Button-only boards keep the touch controller unbound. Report zero touch
+    // points instead of failing: guests that query input.info at startup would
+    // otherwise trap ("input.info failed") and abort. SystemGestureRouter adds
+    // the key-event capability on top of whatever lands here.
+    info.max_touch_points = Available() ? max_touch_points_ : 0U;
     return MICROPIXEL_STATUS_OK;
 }
 

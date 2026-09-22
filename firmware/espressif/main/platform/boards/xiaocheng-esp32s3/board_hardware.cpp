@@ -45,6 +45,7 @@ esp_err_t BoardHardware::Initialize() {
     // high, audio power on, LDO on, amplifier on), then enable those output
     // directions. Audio needs all three XL9535 rails: P1.4, P0.7 and P0.3.
     port0_output_ = kXl9535OutputPort0Preset;
+    port0_config_ = kXl9535ConfigPort0Value;
     ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort0, port0_output_), kTag,
                         "preset XL9535 port 0 outputs failed");
     ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535OutputPort1, kXl9535OutputPort1Preset), kTag,
@@ -71,6 +72,27 @@ esp_err_t BoardHardware::Initialize() {
     ESP_RETURN_ON_ERROR(ledc_channel_config(&channel_config), kTag, "configure backlight channel failed");
     brightness_initialized_ = true;
     return ESP_OK;
+}
+
+esp_err_t BoardHardware::SetKeyColumnsDischarged() {
+    if (expander_ == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Key columns become outputs driving low so their line capacitance
+    // discharges; P0.3/P0.7 keep their output direction and level (mirrors).
+    port0_config_ = static_cast<uint8_t>(port0_config_ & ~kKeyColumnMask);
+    port0_output_ = static_cast<uint8_t>(port0_output_ & ~kKeyColumnMask);
+    ESP_RETURN_ON_ERROR(WriteExpanderRegister(kXl9535ConfigPort0, port0_config_), kTag,
+                        "switch key columns to output failed");
+    return WriteExpanderRegister(kXl9535OutputPort0, port0_output_);
+}
+
+esp_err_t BoardHardware::SetKeyColumnsInput() {
+    if (expander_ == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    port0_config_ = static_cast<uint8_t>(port0_config_ | kKeyColumnMask);
+    return WriteExpanderRegister(kXl9535ConfigPort0, port0_config_);
 }
 
 esp_err_t BoardHardware::ReadInputPorts(uint16_t& ports) {

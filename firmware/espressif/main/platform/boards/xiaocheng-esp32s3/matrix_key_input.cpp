@@ -43,6 +43,18 @@ constexpr int32_t kFallbackSwipeStepPx = 96;
 // B held at least this long pages backwards instead of forwards.
 constexpr uint32_t kBackLongPressMs = 700U;
 
+// Maze Evil (the seeded FPS) reads movement from a virtual stick on the left
+// half of the screen: a touch down left of x=160 sets the stick origin, and
+// the offset from it is the deflection (70 px = full, 10 px dead zone; forward
+// = -dy, strafe = +dx). Direction keys are mirrored onto that stick so
+// movement works without a touch panel. The mirror fires only for keys a
+// guest actually consumed - the Hall declines direction keys and keeps using
+// them for navigation, so it is never touched by this.
+constexpr int32_t kStickOriginX = 80;
+constexpr int32_t kStickOriginY = 120;
+constexpr int32_t kStickFullDeflection = 70;
+constexpr uint32_t kStickTouchId = 3U;  // tap=1, swipe=2
+
 }  // namespace
 
 MatrixKeyInput::~MatrixKeyInput() { Stop(); }
@@ -57,12 +69,12 @@ esp_err_t MatrixKeyInput::Initialize(device::Input& input) {
         rows_config.pin_bit_mask |= BIT64(row);
     }
     rows_config.mode = GPIO_MODE_OUTPUT;
-    rows_config.pull_up_en = GPIO_PULLUP_ENABLE;
+    rows_config.pull_up_en = GPIO_PULLUP_DISABLE;
     rows_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
     rows_config.intr_type = GPIO_INTR_DISABLE;
     ESP_RETURN_ON_ERROR(gpio_config(&rows_config), kTag, "configure matrix rows failed");
     for (const gpio_num_t row : kMatrixRows) {
-        (void)gpio_set_level(row, 1);  // idle high
+        (void)gpio_set_level(row, 0);  // idle low: a held key cannot back-feed
     }
 
     worker_stopped_ = xSemaphoreCreateBinary();
@@ -85,6 +97,18 @@ esp_err_t MatrixKeyInput::Initialize(device::Input& input) {
 esp_err_t MatrixKeyInput::ReadPorts(void* context) {
     auto& scan = *static_cast<ScanContext*>(context);
     scan.status = scan.hardware->ReadInputPorts(scan.ports);
+    return scan.status;
+}
+
+esp_err_t MatrixKeyInput::DischargeColumns(void* context) {
+    auto& scan = *static_cast<ScanContext*>(context);
+    scan.status = scan.hardware->SetKeyColumnsDischarged();
+    return scan.status;
+}
+
+esp_err_t MatrixKeyInput::ReleaseColumns(void* context) {
+    auto& scan = *static_cast<ScanContext*>(context);
+    scan.status = scan.hardware->SetKeyColumnsInput();
     return scan.status;
 }
 
@@ -135,6 +159,50 @@ void MatrixKeyInput::HandleFallback(size_t index, device::KeyCode code, bool pre
             EmulateHallSwipe(forward);
         }
     }
+}
+
+void MatrixKeyInput::MirrorStickTouch(device::KeyCode code, bool pressed) {
+    int32_t dx = 0;
+    int32_t dy = 0;
+    switch (code) {
+        case device::KeyCode::kUp:
+            dy = -kStickFullDeflection;  // up on the stick = walk forward
+            break;
+        case device::KeyCode::kDown:
+            dy = kStickFullDeflection;
+            break;
+        case device::KeyCode::kLeft:
+            dx = -kStickFullDeflection;
+            break;
+        case device::KeyCode::kRight:
+            dx = kStickFullDeflection;
+            break;
+        default:
+            return;
+    }
+    // The stick position only updates on kMove, so a press has to send the
+    // down at the origin followed by the move to the deflected point.
+    if (pressed) {
+        (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
+                                   .id = kStickTouchId,
+                                   .x = kStickOriginX,
+                                   .y = kStickOriginY,
+                                   .pressure_per_mille = 1000U,
+                                   .phase = device::TouchPhase::kDown});
+        (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
+                                   .id = kStickTouchId,
+                                   .x = kStickOriginX + dx,
+                                   .y = kStickOriginY + dy,
+                                   .pressure_per_mille = 1000U,
+                                   .phase = device::TouchPhase::kMove});
+        return;
+    }
+    (void)input_->InjectTouch({.timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
+                               .id = kStickTouchId,
+                               .x = kStickOriginX + dx,
+                               .y = kStickOriginY + dy,
+                               .pressure_per_mille = 1000U,
+                               .phase = device::TouchPhase::kUp});
 }
 
 void MatrixKeyInput::EmulateHallPress(bool pressed) {
@@ -218,30 +286,49 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
 }
 
 void MatrixKeyInput::Scan() {
+    // Charge-transfer scan (vendor-verified on this board): the key columns
+    // have no pull-ups and float, so polarity is resolved by discharging every
+    // column low, letting the driven row charge it through a closed key, and
+    // reading HIGH = pressed. A "pressed = low" read against floating columns
+    // produced phantom presses.
+    ScanContext scan{&hardware_, 0xFFFFU, ESP_OK};
+    if (executor_.Invoke(buses::I2cExecutor::Priority::kLow, DischargeColumns, &scan) != ESP_OK ||
+        scan.status != ESP_OK) {
+        return;  // I2C error: keep the previous stable state, emit nothing
+    }
+    vTaskDelay(pdMS_TO_TICKS(kColumnDischargeMs));
+
+    const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     for (size_t row_index = 0; row_index < 2U; ++row_index) {
         const gpio_num_t row = kMatrixRows[row_index];
-        (void)gpio_set_level(row, 0);  // drive this row low
-        ScanContext scan{&hardware_, 0xFFFFU, ESP_OK};
-        const esp_err_t status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReadPorts, &scan);
-        (void)gpio_set_level(row, 1);  // back to idle high
-        if (status != ESP_OK || scan.status != ESP_OK) {
-            ESP_LOGW(kTag, "matrix scan read failed: %s", esp_err_to_name(status != ESP_OK ? status : scan.status));
-            continue;
+        (void)gpio_set_level(row, 1);
+        vTaskDelay(pdMS_TO_TICKS(kRowSettleMs));
+        scan = ScanContext{&hardware_, 0xFFFFU, ESP_OK};
+        const esp_err_t release_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReleaseColumns, &scan);
+        const esp_err_t read_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReadPorts, &scan);
+        (void)gpio_set_level(row, 0);
+        if (release_status != ESP_OK || read_status != ESP_OK || scan.status != ESP_OK) {
+            continue;  // I2C error: keep the previous stable state
         }
+        const uint16_t ports = scan.ports;
         for (size_t key_index = 0; key_index < 6U; ++key_index) {
             const MatrixKeyEntry& entry = kMatrixKeys[key_index];
             if (entry.row != row) {
                 continue;
             }
-            // Columns are inputs; a pressed key pulls its column low.
-            const bool pressed = (scan.ports & entry.column_bit) == 0U;
-            const bool debounced = pressed && last_raw_[key_index];
-            last_raw_[key_index] = pressed;
-            if (debounced == emitted_[key_index]) {
+            // The column was just discharged; only a closed key charges it high.
+            const bool pressed = (ports & entry.column_bit) != 0U;
+            if (pressed != raw_[key_index]) {
+                raw_[key_index] = pressed;
+                raw_change_ms_[key_index] = now_ms;
+            }
+            // Timestamp debounce: the raw level must hold steady for the whole
+            // window before the stable state flips.
+            if (now_ms - raw_change_ms_[key_index] < kKeyDebounceMs || pressed == emitted_[key_index]) {
                 continue;
             }
-            emitted_[key_index] = debounced;
-            if (debounced && AnyOtherKeyEmitted(key_index)) {
+            emitted_[key_index] = pressed;
+            if (pressed && AnyOtherKeyEmitted(key_index)) {
                 // Both buttons are down: this is the Host's two-button exit
                 // shortcut, not app input.
                 chord_held_ = true;
@@ -249,11 +336,16 @@ void MatrixKeyInput::Scan() {
             const bool delivered = input_ != nullptr && input_->InjectKey({
                                                             .timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
                                                             .code = entry.code,
-                                                            .phase = debounced ? device::KeyPhase::kDown
-                                                                               : device::KeyPhase::kUp,
+                                                            .phase = pressed ? device::KeyPhase::kDown
+                                                                             : device::KeyPhase::kUp,
                                                             .repeat_count = 0U,
                                                     });
-            ESP_LOGD(kTag, "%s %s", entry.name, debounced ? "down" : "up");
+            ESP_LOGD(kTag, "%s %s", entry.name, pressed ? "down" : "up");
+            if (delivered) {
+                // A guest took the key: mirror direction keys onto the Maze
+                // Evil virtual stick so movement works on a button-only board.
+                MirrorStickTouch(entry.code, pressed);
+            }
             if (delivered || chord_held_) {
                 // Consumed: either a key-driven guest handled it, or the
                 // gesture router used it for the Hall navigation / the
@@ -265,7 +357,7 @@ void MatrixKeyInput::Scan() {
             // No key consumer is bound: a touch-driven host page is showing
             // and no guest app runs. Confirm and Back fall back to Hall
             // navigation or synthetic touches.
-            HandleFallback(key_index, entry.code, debounced);
+            HandleFallback(key_index, entry.code, pressed);
         }
     }
     bool any_emitted = false;

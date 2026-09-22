@@ -43,11 +43,14 @@ class MatrixKeyInput final {
     };
 
     static esp_err_t ReadPorts(void* context);
+    static esp_err_t DischargeColumns(void* context);
+    static esp_err_t ReleaseColumns(void* context);
     void Scan();
     static void WorkerEntry(void* context);
     void Stop();
     [[nodiscard]] bool AnyOtherKeyEmitted(size_t index) const;
     void HandleFallback(size_t index, device::KeyCode code, bool pressed);
+    void MirrorStickTouch(device::KeyCode code, bool pressed);
     void EmulateHallPress(bool pressed);
     void EmulateHallSwipe(bool forward);
 
@@ -57,8 +60,9 @@ class MatrixKeyInput final {
     TaskHandle_t worker_{};
     SemaphoreHandle_t worker_stopped_{};
     std::atomic<bool> stopping_{};
-    bool last_raw_[6U]{};   // previous raw sample, for two-sample debounce
-    bool emitted_[6U]{};    // current stable state already reported
+    bool raw_[6U]{};              // last raw sample of this key
+    uint32_t raw_change_ms_[6U]{};  // when the raw sample last changed
+    bool emitted_[6U]{};          // current stable state already reported
     uint32_t confirm_down_ms_{};
     bool confirm_fallback_active_{};
     bool back_pending_[6U]{};

@@ -75,9 +75,12 @@ inline constexpr gpio_num_t kAudioWordSelect = GPIO_NUM_17;
 inline constexpr gpio_num_t kAudioDataOut = GPIO_NUM_13;
 inline constexpr uint8_t kEs8311Address = 0x18U;  // seven-bit, matches the verified board
 
-// Key matrix: two native-GPIO rows x three XL9535 columns, pressed = low.
-// Physical layout from the verified board: A/RIGHT/UP on row GPIO0 and
-// DOWN/B/LEFT on row GPIO46. Reorder the codes here after on-board testing.
+// Key matrix: two native-GPIO rows x three XL9535 columns. Vendor-verified
+// wiring (xiaozhi-zyb / xiaocheng-dcp): the key columns have NO pull-ups and
+// float, so scanning is charge-transfer - discharge all columns low, drive one
+// row high, release the columns to inputs and read HIGH = pressed. Rows idle
+// low. Physical layout: A/RIGHT/UP on row GPIO0 and DOWN/B/LEFT on row GPIO46.
+// Reorder the codes here after on-board testing.
 struct MatrixKeyEntry final {
     gpio_num_t row;
     uint8_t column_bit;  // bit inside XL9535 input port 0
@@ -95,6 +98,12 @@ inline constexpr MatrixKeyEntry kMatrixKeys[6U]{
 };
 
 inline constexpr gpio_num_t kMatrixRows[2U]{GPIO_NUM_0, GPIO_NUM_46};
-inline constexpr uint32_t kMatrixScanPeriodMs = 20U;
+inline constexpr uint8_t kKeyColumnMask = static_cast<uint8_t>((1U << 0U) | (1U << 4U) | (1U << 6U));  // P0.0/4/6
+// The scan itself takes ~13 ms (10 ms discharge + 2 rows); the delay between
+// scans keeps the full cycle around 18 ms, so a 50 ms debounce is 2-3 scans.
+inline constexpr uint32_t kMatrixScanPeriodMs = 5U;
+inline constexpr uint32_t kKeyDebounceMs = 50U;
+inline constexpr uint32_t kColumnDischargeMs = 10U;
+inline constexpr uint32_t kRowSettleMs = 1U;
 
 }  // namespace micropixel::platform::xiaocheng_esp32s3

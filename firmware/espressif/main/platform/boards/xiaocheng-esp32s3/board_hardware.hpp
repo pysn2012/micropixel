@@ -17,6 +17,12 @@ class BoardHardware final {
    public:
     [[nodiscard]] esp_err_t Initialize();
     [[nodiscard]] esp_err_t ReadInputPorts(uint16_t& ports);
+    // Charge-transfer key scanning: discharge the key columns (drive them as
+    // outputs low), then release them back to inputs before each row read.
+    // Both go through port 0 mirrors so the audio rails (P0.3/P0.7) keep
+    // their direction and level.
+    [[nodiscard]] esp_err_t SetKeyColumnsDischarged();
+    [[nodiscard]] esp_err_t SetKeyColumnsInput();
     [[nodiscard]] esp_err_t PulseLcdReset();
     [[nodiscard]] esp_err_t SetBrightness(int percent);
     [[nodiscard]] esp_err_t SetAmplifier(bool enabled, buses::I2cExecutor& executor);
@@ -28,6 +34,7 @@ class BoardHardware final {
     i2c_master_bus_handle_t i2c_bus_{};
     i2c_master_dev_handle_t expander_{};
     uint8_t port0_output_{0x00U};  // XL9535 port 0 output latch mirror
+    uint8_t port0_config_{0xFFU};  // XL9535 port 0 direction mirror (1 = input)
     bool brightness_initialized_{};
 };
 
