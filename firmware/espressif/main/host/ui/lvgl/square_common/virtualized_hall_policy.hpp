@@ -25,6 +25,15 @@ class VirtualizedHallPolicy final {
     void PrepareLaunch(uint32_t app_index);
     void Leave();
 
+    // Button navigation for boards without a touch screen. Both take the LVGL
+    // adapter lock themselves because they run on the key driver task.
+    [[nodiscard]] bool NavigateSelection(bool forward);
+    [[nodiscard]] bool LaunchSelection();
+    void UpdateSelectionHighlightLocked();
+    // True while the Hall owns the screen. The key driver uses it to tell a
+    // Hall button press from a press inside a running Guest.
+    [[nodiscard]] bool HallIsShowing() const { return state_.hall_launch_enabled; }
+
    private:
     static void ResetCallback(void* context);
     static void ShowPlaceholder(void* context, uint32_t app_index);
@@ -59,5 +68,15 @@ class VirtualizedHallPolicy final {
     SquarePresentation& presentation_;
     uint32_t pending_launch_index_{host_ui::kMaxHallApps};
 };
+
+// Entry points for the platform button driver. The driver declares them weak,
+// so a build without the Hall still links, and null-checks before calling.
+extern "C" {
+bool micropixel_hall_key_nav_step(bool forward);
+bool micropixel_hall_key_nav_launch();
+// True while the Hall page owns the screen, so the key driver and the gesture
+// router can tell a Hall press from a press inside a running Guest.
+bool micropixel_hall_key_nav_active();
+}
 
 }  // namespace micropixel::host_ui::lvgl::square_common

@@ -22,6 +22,11 @@ constexpr char kTag[] = "square_virtual_hall";
 constexpr uint32_t kCoverPrefetchCards = 1U;
 }  // namespace
 
+// Latest policy that presented the Hall. Cleared on Leave(); every entry point
+// also re-checks hall_launch_enabled, because a running Guest tears the Hall
+// state down without necessarily calling Leave().
+VirtualizedHallPolicy* g_active_hall_policy = nullptr;
+
 HallPresentationRect HallCardPresentationRect(const SquareSystemUiProfile& profile, uint32_t index,
                                               int32_t scroll_offset) {
     return {.x = profile.hall_scene.carousel.x +
@@ -445,6 +450,7 @@ void VirtualizedHallPolicy::StopButtonEvent(lv_event_t* event) {
 std::expected<void, host_ui::SystemUiError> VirtualizedHallPolicy::Show(const host_ui::HallModel& model,
                                                                         host_ui::SystemUiActionSink action_sink,
                                                                         void* action_context) {
+    g_active_hall_policy = this;
     if (state_.display == nullptr) {
         return std::unexpected(host_ui::SystemUiError::kUnavailable);
     }
@@ -481,6 +487,7 @@ std::expected<void, host_ui::SystemUiError> VirtualizedHallPolicy::Show(const ho
     if (signature != state_.hall_catalog_signature) {
         state_.hall_catalog_signature = signature;
         state_.hall_scroll_offset = 0;
+        state_.hall_selected_index = 0;
         state_.hall_idle_cover_sources.fill({});
     }
     state_.hall_cover_cache.BeginCatalog(model, visible_count, signature);
@@ -601,6 +608,14 @@ std::expected<void, host_ui::SystemUiError> VirtualizedHallPolicy::Show(const ho
     state_.hall_status_bar_valid = true;
     state_.BindHostPointerTouchSink();
     state_.input_router.BindSystemActionSink(action_sink, action_context);
+    if (state_.hall_selected_index >= visible_count) {
+        state_.hall_selected_index = 0;
+    }
+    if (esp_lv_adapter_lock(-1) == ESP_OK) {
+        UpdateSelectionHighlightLocked();
+        platform::lvgl::RequestDisplayRefresh(state_.display);
+        esp_lv_adapter_unlock();
+    }
     ESP_LOGI(kTag, "Hall visible: apps=%" PRIu32, visible_count);
     return {};
 }
@@ -643,6 +658,9 @@ void VirtualizedHallPolicy::PrepareLaunch(uint32_t app_index) {
 }
 
 void VirtualizedHallPolicy::Leave() {
+    if (g_active_hall_policy == this) {
+        g_active_hall_policy = nullptr;
+    }
     PauseCoverLoading();
     const uint32_t launch_index = std::exchange(pending_launch_index_, host_ui::kMaxHallApps);
     const uint32_t running = RunningAppIndex();
@@ -711,4 +729,81 @@ void VirtualizedHallPolicy::Leave() {
     }
 }
 
+bool VirtualizedHallPolicy::NavigateSelection(bool forward) {
+    const uint32_t count = state_.hall_app_count;
+    // hall_launch_enabled is cleared the moment a Guest takes the screen, so it
+    // doubles as "the Hall is actually the active page".
+    if (count == 0U || !state_.hall_launch_enabled) {
+        return false;
+    }
+    if (state_.hall_selected_index >= count) {
+        state_.hall_selected_index = 0;
+    }
+    state_.hall_selected_index = forward ? (state_.hall_selected_index + 1U) % count
+                                         : (state_.hall_selected_index + count - 1U) % count;
+    const int32_t reveal = RevealOffset(count, state_.hall_scroll_offset, state_.hall_selected_index);
+    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+        return false;
+    }
+    if (reveal != state_.hall_scroll_offset) {
+        lv_obj_t* viewport = state_.hall_scene_ui.objects().carousel_viewport;
+        if (viewport != nullptr) {
+            lv_obj_scroll_to_x(viewport, reveal, LV_ANIM_OFF);
+        }
+        UpdateCarouselLocked(viewport != nullptr ? lv_obj_get_scroll_x(viewport) : reveal);
+    }
+    // Card windows are rebuilt by the scroll update, so paint after it.
+    UpdateSelectionHighlightLocked();
+    platform::lvgl::RequestDisplayRefresh(state_.display);
+    esp_lv_adapter_unlock();
+    return true;
+}
+
+bool VirtualizedHallPolicy::LaunchSelection() {
+    const uint32_t count = state_.hall_app_count;
+    if (count == 0U || !state_.hall_launch_enabled || state_.hall_action_sink == nullptr) {
+        return false;
+    }
+    const uint32_t index = state_.hall_selected_index < count ? state_.hall_selected_index : 0U;
+    state_.hall_action_sink(state_.hall_action_context,
+                            host_ui::SystemUiAction{.type = host_ui::SystemUiActionType::kLaunchApp,
+                                                    .app_index = index});
+    return true;
+}
+
+void VirtualizedHallPolicy::UpdateSelectionHighlightLocked() {
+    for (uint32_t index = 0U; index < state_.hall_app_count; ++index) {
+        // hall_cards holds the card objects themselves (FindCardIndex compares
+        // them against the event target directly).
+        lv_obj_t* card = state_.hall_cards[index];
+        if (card == nullptr || !lv_obj_is_valid(card)) {
+            continue;
+        }
+        const bool selected = index == state_.hall_selected_index;
+        lv_obj_set_style_border_width(card, selected ? 3 : 0, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card, lv_color_hex(0xFFFFFFU), LV_PART_MAIN);
+        lv_obj_set_style_border_opa(card, selected ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+    }
+}
+
 }  // namespace micropixel::host_ui::lvgl::square_common
+
+extern "C" bool micropixel_hall_key_nav_step(bool forward) {
+    micropixel::host_ui::lvgl::square_common::VirtualizedHallPolicy* policy =
+        micropixel::host_ui::lvgl::square_common::g_active_hall_policy;
+    return policy != nullptr && policy->NavigateSelection(forward);
+}
+
+extern "C" bool micropixel_hall_key_nav_launch() {
+    micropixel::host_ui::lvgl::square_common::VirtualizedHallPolicy* policy =
+        micropixel::host_ui::lvgl::square_common::g_active_hall_policy;
+    return policy != nullptr && policy->LaunchSelection();
+}
+
+extern "C" bool micropixel_hall_key_nav_active() {
+    micropixel::host_ui::lvgl::square_common::VirtualizedHallPolicy* policy =
+        micropixel::host_ui::lvgl::square_common::g_active_hall_policy;
+    // hall_launch_enabled is the reliable "the Hall is the visible page" flag:
+    // the shell clears it both on Leave() and when a Guest takes the screen.
+    return policy != nullptr && policy->HallIsShowing();
+}

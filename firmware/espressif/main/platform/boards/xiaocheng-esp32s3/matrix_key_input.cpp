@@ -10,11 +10,38 @@
 #include "platform/boards/xiaocheng-esp32s3/board_hardware.hpp"
 #include "work/task_policy.hpp"
 
+// Provided by the host App Hall when it is compiled in. Declared weak so a
+// build without the Hall still links; both are null-checked before use.
+extern "C" {
+__attribute__((weak)) bool micropixel_hall_key_nav_step(bool forward);
+__attribute__((weak)) bool micropixel_hall_key_nav_launch();
+__attribute__((weak)) bool micropixel_hall_key_nav_active();
+}
+
 namespace micropixel::platform::xiaocheng_esp32s3 {
 namespace {
 
 constexpr char kTag[] = "xiaocheng_keys";
 constexpr uint32_t kWorkerStackBytes = 4096U;
+
+// True while the Hall page owns the screen; used to tell "a touch-only Guest
+// is running" from "the Hall is up".
+bool HallOwnsScreen() {
+    return &micropixel_hall_key_nav_active != nullptr && micropixel_hall_key_nav_active();
+}
+
+// Synthetic tap point for the fallback press: center of the middle Hall card
+// on the 320x240 landscape screen (cards 88x120, 8px gap, starting at x=12).
+constexpr uint16_t kFallbackTapX = 152U;
+constexpr uint16_t kFallbackTapY = 148U;
+// A quick press is stretched to this so the Hall reliably sees the tap;
+// longer holds pass through unchanged (hold-to-charge games get the real
+// press duration).
+constexpr uint32_t kFallbackTapHoldMs = 60U;
+// Horizontal drag of one Hall carousel card step (card width 88 + gap 8).
+constexpr int32_t kFallbackSwipeStepPx = 96;
+// B held at least this long pages backwards instead of forwards.
+constexpr uint32_t kBackLongPressMs = 700U;
 
 }  // namespace
 
@@ -61,6 +88,135 @@ esp_err_t MatrixKeyInput::ReadPorts(void* context) {
     return scan.status;
 }
 
+bool MatrixKeyInput::AnyOtherKeyEmitted(size_t index) const {
+    for (size_t other = 0; other < 6U; ++other) {
+        if (other != index && emitted_[other]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void MatrixKeyInput::HandleFallback(size_t index, device::KeyCode code, bool pressed) {
+    if (code == device::KeyCode::kConfirm) {
+        if (pressed) {
+            // The gesture router normally consumes the Hall launch; this is
+            // the fallback for host pages it declines.
+            if (&micropixel_hall_key_nav_launch != nullptr && micropixel_hall_key_nav_launch()) {
+                return;
+            }
+            if (HallOwnsScreen()) {
+                return;
+            }
+            EmulateHallPress(true);
+            confirm_fallback_active_ = true;
+        } else if (confirm_fallback_active_) {
+            confirm_fallback_active_ = false;
+            // If the two-button exit already brought the Hall back, releasing
+            // the button must not fire a stray tap into it.
+            if (!HallOwnsScreen()) {
+                EmulateHallPress(false);
+            }
+        }
+    } else if (code == device::KeyCode::kBack) {
+        if (pressed) {
+            back_down_ms_[index] = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            back_pending_[index] = true;
+        } else if (back_pending_[index]) {
+            back_pending_[index] = false;
+            const uint32_t held_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000) - back_down_ms_[index];
+            const bool forward = held_ms < kBackLongPressMs;
+            if (&micropixel_hall_key_nav_step != nullptr && micropixel_hall_key_nav_step(forward)) {
+                return;
+            }
+            if (HallOwnsScreen()) {
+                return;
+            }
+            EmulateHallSwipe(forward);
+        }
+    }
+}
+
+void MatrixKeyInput::EmulateHallPress(bool pressed) {
+    // The upstream App Hall only reacts to pointer input, and several store
+    // games are touch-only as well. The confirm button therefore drives a real
+    // press-and-hold rather than a fixed-length tap: the Hall still sees a tap
+    // on a quick press, while hold-to-charge games (Jump Jump) receive the
+    // actual press duration and can charge a jump.
+    constexpr uint32_t kTapId = 1U;
+    const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    if (pressed) {
+        confirm_down_ms_ = now_ms;
+        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                                   .id = kTapId,
+                                   .x = kFallbackTapX,
+                                   .y = kFallbackTapY,
+                                   .pressure_per_mille = 1000U,
+                                   .phase = device::TouchPhase::kDown});
+        return;
+    }
+    const uint32_t held_ms = now_ms - confirm_down_ms_;
+    if (held_ms < kFallbackTapHoldMs) {
+        vTaskDelay(pdMS_TO_TICKS(kFallbackTapHoldMs - held_ms));
+    }
+    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                               .id = kTapId,
+                               .x = kFallbackTapX,
+                               .y = kFallbackTapY,
+                               .pressure_per_mille = 1000U,
+                               .phase = device::TouchPhase::kUp});
+}
+
+void MatrixKeyInput::EmulateHallSwipe(bool forward) {
+    // The App Hall carousel is a horizontally dragged LVGL list. A synthetic
+    // drag of one card step pages the selection. The drag ends with two slow
+    // 2-pixel moves so the release velocity stays near zero and LVGL does not
+    // keep scrolling after the finger lifts.
+    constexpr uint32_t kSwipeId = 2U;
+    constexpr int32_t kSwipeY = 148;  // vertical center of a Hall card
+    constexpr int32_t kAnchorX = 170;
+    constexpr int32_t kFastSteps = 6;
+    constexpr int32_t kTrailingPx = 2;
+    const int32_t step = kFallbackSwipeStepPx;
+    const int32_t direction = forward ? -1 : 1;
+    const int32_t start_x = kAnchorX - direction * step / 2;
+    const int32_t fast_total = step - 2 * kTrailingPx;
+    int32_t x = start_x;
+    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                               .id = kSwipeId,
+                               .x = x,
+                               .y = kSwipeY,
+                               .pressure_per_mille = 1000U,
+                               .phase = device::TouchPhase::kDown});
+    for (int32_t i = 1; i <= kFastSteps; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(12U));
+        x = start_x + direction * fast_total * i / kFastSteps;
+        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                                   .id = kSwipeId,
+                                   .x = x,
+                                   .y = kSwipeY,
+                                   .pressure_per_mille = 1000U,
+                                   .phase = device::TouchPhase::kMove});
+    }
+    for (int32_t i = 0; i < 2; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(35U));
+        x += direction * kTrailingPx;
+        (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                                   .id = kSwipeId,
+                                   .x = x,
+                                   .y = kSwipeY,
+                                   .pressure_per_mille = 1000U,
+                                   .phase = device::TouchPhase::kMove});
+    }
+    vTaskDelay(pdMS_TO_TICKS(35U));
+    (void)input_->InjectTouch({.timestamp_us = esp_timer_get_time(),
+                               .id = kSwipeId,
+                               .x = x,
+                               .y = kSwipeY,
+                               .pressure_per_mille = 1000U,
+                               .phase = device::TouchPhase::kUp});
+}
+
 void MatrixKeyInput::Scan() {
     for (size_t row_index = 0; row_index < 2U; ++row_index) {
         const gpio_num_t row = kMatrixRows[row_index];
@@ -81,17 +237,43 @@ void MatrixKeyInput::Scan() {
             const bool pressed = (scan.ports & entry.column_bit) == 0U;
             const bool debounced = pressed && last_raw_[key_index];
             last_raw_[key_index] = pressed;
-            if (input_ != nullptr && debounced != emitted_[key_index]) {
-                emitted_[key_index] = debounced;
-                (void)input_->InjectKey({
-                    .timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
-                    .code = entry.code,
-                    .phase = debounced ? device::KeyPhase::kDown : device::KeyPhase::kUp,
-                    .repeat_count = 0U,
-                });
-                ESP_LOGD(kTag, "%s %s", entry.name, debounced ? "down" : "up");
+            if (debounced == emitted_[key_index]) {
+                continue;
             }
+            emitted_[key_index] = debounced;
+            if (debounced && AnyOtherKeyEmitted(key_index)) {
+                // Both buttons are down: this is the Host's two-button exit
+                // shortcut, not app input.
+                chord_held_ = true;
+            }
+            const bool delivered = input_ != nullptr && input_->InjectKey({
+                                                            .timestamp_us = static_cast<uint64_t>(esp_timer_get_time()),
+                                                            .code = entry.code,
+                                                            .phase = debounced ? device::KeyPhase::kDown
+                                                                               : device::KeyPhase::kUp,
+                                                            .repeat_count = 0U,
+                                                    });
+            ESP_LOGD(kTag, "%s %s", entry.name, debounced ? "down" : "up");
+            if (delivered || chord_held_) {
+                // Consumed: either a key-driven guest handled it, or the
+                // gesture router used it for the Hall navigation / the
+                // two-button exit (a Hall launch must not be followed by a
+                // stray synthetic tap). Releasing either button of the exit
+                // chord must not also page the Hall or slide its carousel.
+                continue;
+            }
+            // No key consumer is bound: a touch-driven host page is showing
+            // and no guest app runs. Confirm and Back fall back to Hall
+            // navigation or synthetic touches.
+            HandleFallback(key_index, entry.code, debounced);
         }
+    }
+    bool any_emitted = false;
+    for (const bool emitted : emitted_) {
+        any_emitted = any_emitted || emitted;
+    }
+    if (!any_emitted) {
+        chord_held_ = false;
     }
 }
 

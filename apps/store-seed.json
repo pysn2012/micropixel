@@ -1,0 +1,77 @@
+{
+  "comment": "App Bundles pre-seeded into the H1 app_store partition. Every entry is a published MicroPixel store release for the Xtensa (ESP32-S3) AOT target; this build pipeline never compiles Guests, it only packs these prebuilt bundles.",
+  "storeAppsEndpoint": "https://micropixel.ai/api/v1/store/apps",
+  "downloadUrlTemplate": "https://micropixel.ai/api/v1/store/releases/{releaseId}/download",
+  "apps": [
+    {
+      "appId": "micropixel.jump-jump",
+      "title": "Jump Jump",
+      "releaseId": "821204e8-4e4c-43aa-87bc-c075ffbaea79",
+      "version": "0.1.8",
+      "target": "xtensa",
+      "sizeBytes": 458752,
+      "sha256": "d4fbda64a76846f432ef7a9f1f366bb9a9e80b029a756c390f708525ca38608e",
+      "note": "main target: hold-to-charge jump game"
+    },
+    {
+      "appId": "com.lckfb.jump",
+      "title": "Jump",
+      "releaseId": "180bdc4d-7b05-422f-8c19-152f36c97e49",
+      "version": "0.1.7",
+      "target": "xtensa",
+      "sizeBytes": 786432,
+      "sha256": "2309a4da2a5df35e88a9ce6a1f34d0577f5b70b1fccd7539d817b39e86070f9c",
+      "note": "second jump game; declares optional input.keys (key fallback)"
+    },
+    {
+      "appId": "micropixel.demo",
+      "title": "SDK Demo",
+      "releaseId": "5353676f-b99e-4e2c-b2fc-125d35647147",
+      "version": "0.1.0",
+      "target": "xtensa",
+      "sizeBytes": 1048576,
+      "sha256": "3d61fadf08b780e8e833d6c3c9f35efecc6f88d44b5729cb2274da9c463c2a4c",
+      "note": "SDK Demo: exercises graphics, fonts and input"
+    },
+    {
+      "appId": "micropixel.snake",
+      "title": "Juicy Snake",
+      "releaseId": "7e55520c-b661-4209-b69c-c4b0cf96caa4",
+      "version": "0.1.0",
+      "target": "xtensa",
+      "sizeBytes": 917504,
+      "sha256": "ac439727bf9c3279a19a95ccb1e326eafdcff9ebf7013a7bc465c30df900b228",
+      "note": "Juicy Snake"
+    },
+    {
+      "appId": "micropixel.blocks",
+      "title": "Juicy Blocks",
+      "releaseId": "7e834387-efbc-421a-8050-ed976371fbf5",
+      "version": "0.1.1",
+      "target": "xtensa",
+      "sizeBytes": 589824,
+      "sha256": "5af9f634699d78fce611e52ba37095df22380775c3af45513e13e94da8850f5a",
+      "note": "Juicy Blocks"
+    },
+    {
+      "appId": "micropixel.gravity-balls",
+      "title": "Gravity Balls",
+      "releaseId": "aa03a849-77c7-4620-a5b8-3f86c2612201",
+      "version": "0.1.1",
+      "target": "xtensa",
+      "sizeBytes": 327680,
+      "sha256": "78f9bc4b75c3b4ce2511724577c0854755f8027f103c7b213d7e834fb130f697",
+      "note": "Gravity Balls: declares no required capability"
+    },
+    {
+      "appId": "micropixel.maze-break",
+      "title": "Maze Evil",
+      "releaseId": "6fa8feb2-1d09-4766-a7e2-84e28829c4dc",
+      "version": "0.1.3",
+      "target": "xtensa",
+      "sizeBytes": 851968,
+      "sha256": "8a8a20893243798f42ff843d2427790865583ac8fbc6e65533a7c4582bcec8c4",
+      "note": "Maze Evil"
+    }
+  ]
+}

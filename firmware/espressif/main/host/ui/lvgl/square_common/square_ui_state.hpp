@@ -196,6 +196,9 @@ class SquareSystemUiState final {
     uint32_t hall_card_window_first{host_ui::kMaxHallApps};
     uint32_t hall_card_window_last{host_ui::kMaxHallApps};
     int32_t hall_scroll_offset{};
+    // Index of the card the button navigation has focused; wraps around at
+    // both ends so two buttons can reach every installed app.
+    uint32_t hall_selected_index{};
     uint64_t hall_catalog_signature{};
     host_ui::HallStatusBarModel hall_status_bar{};
     bool hall_firmware_update_available{};

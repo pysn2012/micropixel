@@ -21,6 +21,11 @@ class BoardHardware;
 // Scans the 2-row x 3-column key matrix. Rows are native GPIO outputs driven
 // low one at a time; columns read back through the XL9535 input port. Emits
 // debounced key events through the shared device::Input router.
+//
+// Button-only-board integration (ported from the community H1 kit): keys go
+// through InjectKey first; whatever no consumer picked up falls back to Hall
+// navigation entry points or synthetic touches, so the touch-driven App Hall
+// and touch-only store games stay usable without a touch panel.
 class MatrixKeyInput final {
    public:
     MatrixKeyInput(BoardHardware& hardware, buses::I2cExecutor& executor) : hardware_(hardware), executor_(executor) {}
@@ -41,6 +46,10 @@ class MatrixKeyInput final {
     void Scan();
     static void WorkerEntry(void* context);
     void Stop();
+    [[nodiscard]] bool AnyOtherKeyEmitted(size_t index) const;
+    void HandleFallback(size_t index, device::KeyCode code, bool pressed);
+    void EmulateHallPress(bool pressed);
+    void EmulateHallSwipe(bool forward);
 
     BoardHardware& hardware_;
     buses::I2cExecutor& executor_;
@@ -50,6 +59,14 @@ class MatrixKeyInput final {
     std::atomic<bool> stopping_{};
     bool last_raw_[6U]{};   // previous raw sample, for two-sample debounce
     bool emitted_[6U]{};    // current stable state already reported
+    uint32_t confirm_down_ms_{};
+    bool confirm_fallback_active_{};
+    bool back_pending_[6U]{};
+    uint32_t back_down_ms_[6U]{};
+    // Set while both buttons are held at once. A simultaneous A+B press is the
+    // Host shortcut that leaves the running Guest, so the matching releases
+    // must not also drive Hall navigation or an emulated slide.
+    bool chord_held_{};
 };
 
 }  // namespace micropixel::platform::xiaocheng_esp32s3

@@ -9,6 +9,16 @@
 #include "host/ui/gesture_thresholds.hpp"
 
 namespace micropixel::host_ui {
+
+// Provided by the App Hall policy translation unit when the Hall is compiled
+// in. Weak so a host build without the Hall still links; every call site
+// null-checks the symbol address first.
+extern "C" {
+__attribute__((weak)) bool micropixel_hall_key_nav_step(bool forward);
+__attribute__((weak)) bool micropixel_hall_key_nav_launch();
+__attribute__((weak)) bool micropixel_hall_key_nav_active();
+}
+
 namespace {
 
 constexpr char kTag[] = "micropixel_gestures";
@@ -289,14 +299,96 @@ bool SystemGestureRouter::Forward(const device::TouchSample& sample) {
 bool SystemGestureRouter::ForwardKey(const device::KeySample& sample) {
     device::KeySink sink = nullptr;
     void* context = nullptr;
+    bool sink_inflight = false;
     portENTER_CRITICAL(&sink_lock_);
     if (key_sink_ != nullptr) {
         sink = key_sink_;
         context = key_context_;
         ++key_inflight_;
+        sink_inflight = true;
     }
     portEXIT_CRITICAL(&sink_lock_);
+    // Two-button exit to the Hall. Pressing A and B together - the second
+    // button going down while the first is still held - suspends the running
+    // Guest and drops back to the App Hall, the same system action the
+    // bottom-edge swipe emits. Holding both for a second first is accepted as
+    // well, for slow presses. No shipped game binds both buttons at once, so
+    // the shortcut cannot collide with app controls. This runs before the key
+    // sink is consulted on purpose: touch-only apps (Jump Jump and the seeded
+    // store games) never bind a sink at all, and requiring one would leave the
+    // shortcut dead exactly where it is needed most. The Hall itself declines
+    // so A and B keep their navigation meaning there, and any other host page
+    // simply has no foreground Guest to suspend.
+    if (sample.code == device::KeyCode::kConfirm || sample.code == device::KeyCode::kBack) {
+        const bool hall_owns_screen =
+            &micropixel_hall_key_nav_active != nullptr && micropixel_hall_key_nav_active();
+        if (!hall_owns_screen) {
+            static int64_t confirm_down_us = 0;
+            static int64_t back_down_us = 0;
+            static bool two_button_latched = false;
+            bool suspend = false;
+            portENTER_CRITICAL(&sink_lock_);
+            int64_t& slot = (sample.code == device::KeyCode::kConfirm) ? confirm_down_us : back_down_us;
+            const int64_t other = (sample.code == device::KeyCode::kConfirm) ? back_down_us : confirm_down_us;
+            const int64_t now_us = static_cast<int64_t>(sample.timestamp_us);
+            // A press older than this is treated as stale rather than as the
+            // first half of a chord, so a dropped key-up can never turn a
+            // single button press into the exit shortcut.
+            constexpr int64_t kChordWindowUs = 5000000;
+            if (sample.phase == device::KeyPhase::kDown) {
+                if (!two_button_latched && other != 0 && now_us - other <= kChordWindowUs) {
+                    suspend = true;
+                    two_button_latched = true;
+                }
+                slot = now_us;
+            } else if (sample.phase == device::KeyPhase::kUp) {
+                if (!two_button_latched && slot != 0 && other != 0 &&
+                    now_us - (slot > other ? slot : other) >= 1000000) {
+                    suspend = true;
+                    two_button_latched = true;
+                }
+                slot = 0;
+                if (other == 0) {
+                    two_button_latched = false;
+                }
+            }
+            portEXIT_CRITICAL(&sink_lock_);
+            if (suspend) {
+                // Balance the in-flight credit taken above before leaving:
+                // the suspend teardown (UnbindKeySink) waits for key_inflight_
+                // to reach zero, and returning with it pinned would hang the
+                // suspend - and the whole Host loop - forever.
+                if (sink_inflight) {
+                    portENTER_CRITICAL(&sink_lock_);
+                    --key_inflight_;
+                    portEXIT_CRITICAL(&sink_lock_);
+                }
+                ESP_LOGI(kTag, "two-button exit: confirm+back together, suspending to the Hall");
+                Emit(SystemUiActionType::kSuspendToHall, sample.timestamp_us);
+                return true;
+            }
+        }
+    }
     if (sink == nullptr) {
+        // No guest key sink is bound: the touch-driven App Hall may be
+        // showing. Route confirm and directional presses into its keyboard
+        // navigation so buttons work without a touch panel. Host pages other
+        // than the Hall decline and stay quiet.
+        if (sample.phase == device::KeyPhase::kDown) {
+            if (sample.code == device::KeyCode::kConfirm) {
+                if (&micropixel_hall_key_nav_launch != nullptr && micropixel_hall_key_nav_launch()) {
+                    return true;
+                }
+            } else if (sample.code == device::KeyCode::kRight) {
+                if (&micropixel_hall_key_nav_step != nullptr && micropixel_hall_key_nav_step(true)) {
+                    return true;
+                }
+            } else if (sample.code == device::KeyCode::kLeft) {
+                if (&micropixel_hall_key_nav_step != nullptr && micropixel_hall_key_nav_step(false)) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
     const bool delivered = sink(context, sample);

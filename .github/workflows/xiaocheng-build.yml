@@ -54,6 +54,38 @@ jobs:
         run: bash tools/s3.sh build-host xiaocheng
       - name: Collect flashable artifacts
         run: python3 tools/ci/firmware_artifacts.py collect --profile xiaocheng-esp32s3 --output build/ci-host/xiaocheng-esp32s3
+      - name: Download the App Bundles that seed the on-device store
+        # Prebuilt bundles from the public micropixel.ai store API; no WASI
+        # SDK and no wamrc are involved.
+        run: python3 tools/fetch_store_apps.py --manifest apps/store-seed.json --output store-apps
+      - name: Build the seeded app store image
+        run: |
+          set -euo pipefail
+          python3 tools/build_app_store_image.py --app-store-size '0x0800000' \
+            --output build/ci-host/xiaocheng-esp32s3/app-store.bin store-apps/*.bundle.bin
+          # The store lives at 0x800000 and is 8 MiB; a longer image would be
+          # rejected by the full-image builder.
+          test "$(stat -c %s build/ci-host/xiaocheng-esp32s3/app-store.bin)" -le 8388608
+      - name: Build the full single-image firmware (flash from 0x0)
+        run: |
+          set -euo pipefail
+          python3 tools/build_full_firmware_image.py \
+            --build-dir build/host-esp32s3-xiaocheng \
+            --app-store-image build/ci-host/xiaocheng-esp32s3/app-store.bin \
+            --output build/ci-host/xiaocheng-esp32s3/micropixel-full.bin
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import struct
+
+          image = pathlib.Path('build/ci-host/xiaocheng-esp32s3/micropixel-full.bin').read_bytes()
+          app = pathlib.Path('build/ci-host/xiaocheng-esp32s3/micropixel.bin').read_bytes()
+          app_offset = int(json.loads(pathlib.Path('build/ci-host/xiaocheng-esp32s3/flasher_args.json').read_text())['app']['offset'], 0)
+          assert image[:1] == b'\xe9' or image[app_offset:app_offset + 1] == b'\xe9', 'no app image found'
+          assert image[app_offset:app_offset + len(app)] == app, 'embedded app image mismatch'
+          assert struct.unpack_from('<H', image, 0x8000)[0] == 0x50AA, 'partition table missing'
+          print(f'full image ok: {len(image)} bytes, app image embedded at {hex(app_offset)}')
+          PY
       - name: Save IDF tool cache
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:

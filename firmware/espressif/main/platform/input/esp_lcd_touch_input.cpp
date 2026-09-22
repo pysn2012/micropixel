@@ -141,7 +141,10 @@ void EspLcdTouchInput::UnbindTouchSink(void* context) {
 }
 
 bool EspLcdTouchInput::InjectTouch(const device::TouchSample& sample) {
-    if (!Available() || sample.x < 0 || sample.y < 0 || sample.x >= width_ || sample.y >= height_ ||
+    // Button-only boards keep this Input unbound; synthetic taps from key
+    // drivers still have to reach the host UI, so injection must not require
+    // the physical touch controller to be attached.
+    if (sample.x < 0 || sample.y < 0 || sample.x >= width_ || sample.y >= height_ ||
         sample.pressure_per_mille > 1000U) {
         return false;
     }
