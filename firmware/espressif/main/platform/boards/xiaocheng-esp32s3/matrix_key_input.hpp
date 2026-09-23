@@ -18,9 +18,10 @@ namespace micropixel::platform::xiaocheng_esp32s3 {
 
 class BoardHardware;
 
-// Scans the 2-row x 3-column key matrix. Rows are native GPIO outputs driven
-// low one at a time; columns read back through the XL9535 input port. Emits
-// debounced key events through the shared device::Input router.
+// Scans the 2-row x 3-column key matrix. One native GPIO row is driven at a
+// time (low, then high) while the XL9535 columns are read; a press is the
+// difference between the two reads, so no column polarity has to be assumed.
+// Emits debounced key events through the shared device::Input router.
 //
 // Button-only-board integration (ported from the community H1 kit): keys go
 // through InjectKey first; whatever no consumer picked up falls back to Hall
@@ -43,8 +44,6 @@ class MatrixKeyInput final {
     };
 
     static esp_err_t ReadPorts(void* context);
-    static esp_err_t DischargeColumns(void* context);
-    static esp_err_t ReleaseColumns(void* context);
     void Scan();
     static void WorkerEntry(void* context);
     void Stop();

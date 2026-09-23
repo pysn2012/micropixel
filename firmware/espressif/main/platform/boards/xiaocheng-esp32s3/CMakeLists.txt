@@ -4,6 +4,7 @@ list(APPEND micropixel_sources
     "platform/boards/xiaocheng-esp32s3/i2s_audio_sink.cpp"
     "platform/boards/xiaocheng-esp32s3/matrix_key_input.cpp"
     "platform/boards/xiaocheng-esp32s3/platform.cpp"
+    "platform/boards/xiaocheng-esp32s3/sensor_peripheral.cpp"
     "platform/drivers/sensors/lsm6dsl.cpp"
     "platform/input/esp_lcd_touch_input.cpp"
     "platform/sensors/polled_inertial_sensor_peripheral.cpp"

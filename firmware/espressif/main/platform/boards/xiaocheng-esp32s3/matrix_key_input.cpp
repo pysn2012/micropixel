@@ -4,6 +4,7 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "platform/buses/i2c_executor.hpp"
 #include "platform/boards/xiaocheng-esp32s3/board_config.hpp"
@@ -63,19 +64,18 @@ esp_err_t MatrixKeyInput::Initialize(device::Input& input) {
     if (input_ != nullptr || worker_ != nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
+    // Rows idle as high-impedance inputs and are driven only while scanned, so
+    // a held key can never back-feed a neighbouring row.
     gpio_config_t rows_config{};
     rows_config.pin_bit_mask = 0U;
     for (const gpio_num_t row : kMatrixRows) {
         rows_config.pin_bit_mask |= BIT64(row);
     }
-    rows_config.mode = GPIO_MODE_OUTPUT;
+    rows_config.mode = GPIO_MODE_INPUT;
     rows_config.pull_up_en = GPIO_PULLUP_DISABLE;
     rows_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
     rows_config.intr_type = GPIO_INTR_DISABLE;
     ESP_RETURN_ON_ERROR(gpio_config(&rows_config), kTag, "configure matrix rows failed");
-    for (const gpio_num_t row : kMatrixRows) {
-        (void)gpio_set_level(row, 0);  // idle low: a held key cannot back-feed
-    }
 
     worker_stopped_ = xSemaphoreCreateBinary();
     if (worker_stopped_ == nullptr) {
@@ -97,18 +97,6 @@ esp_err_t MatrixKeyInput::Initialize(device::Input& input) {
 esp_err_t MatrixKeyInput::ReadPorts(void* context) {
     auto& scan = *static_cast<ScanContext*>(context);
     scan.status = scan.hardware->ReadInputPorts(scan.ports);
-    return scan.status;
-}
-
-esp_err_t MatrixKeyInput::DischargeColumns(void* context) {
-    auto& scan = *static_cast<ScanContext*>(context);
-    scan.status = scan.hardware->SetKeyColumnsDischarged();
-    return scan.status;
-}
-
-esp_err_t MatrixKeyInput::ReleaseColumns(void* context) {
-    auto& scan = *static_cast<ScanContext*>(context);
-    scan.status = scan.hardware->SetKeyColumnsInput();
     return scan.status;
 }
 
@@ -286,37 +274,41 @@ void MatrixKeyInput::EmulateHallSwipe(bool forward) {
 }
 
 void MatrixKeyInput::Scan() {
-    // Charge-transfer scan (vendor-verified on this board): the key columns
-    // have no pull-ups and float, so polarity is resolved by discharging every
-    // column low, letting the driven row charge it through a closed key, and
-    // reading HIGH = pressed. A "pressed = low" read against floating columns
-    // produced phantom presses.
-    ScanContext scan{&hardware_, 0xFFFFU, ESP_OK};
-    if (executor_.Invoke(buses::I2cExecutor::Priority::kLow, DischargeColumns, &scan) != ESP_OK ||
-        scan.status != ESP_OK) {
-        return;  // I2C error: keep the previous stable state, emit nothing
-    }
-    vTaskDelay(pdMS_TO_TICKS(kColumnDischargeMs));
-
+    // Differential scan: the columns float (no pull-ups), so polarity is
+    // measured instead of assumed. Each row is driven low and then high with a
+    // column read at both levels; only a closed key can couple the row into the
+    // column, so `low ^ high` marks a press regardless of the idle level. Idle
+    // rows stay high-impedance. One sweep is two rows x two I2C reads.
     const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     for (size_t row_index = 0; row_index < 2U; ++row_index) {
         const gpio_num_t row = kMatrixRows[row_index];
-        (void)gpio_set_level(row, 1);
-        vTaskDelay(pdMS_TO_TICKS(kRowSettleMs));
-        scan = ScanContext{&hardware_, 0xFFFFU, ESP_OK};
-        const esp_err_t release_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReleaseColumns, &scan);
-        const esp_err_t read_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReadPorts, &scan);
-        (void)gpio_set_level(row, 0);
-        if (release_status != ESP_OK || read_status != ESP_OK || scan.status != ESP_OK) {
-            continue;  // I2C error: keep the previous stable state
+        for (size_t other = 0; other < 2U; ++other) {
+            if (kMatrixRows[other] != row) {
+                (void)gpio_set_direction(kMatrixRows[other], GPIO_MODE_INPUT);
+            }
         }
-        const uint16_t ports = scan.ports;
+        (void)gpio_set_direction(row, GPIO_MODE_OUTPUT);
+
+        (void)gpio_set_level(row, 0);
+        esp_rom_delay_us(kRowSettleUs);
+        ScanContext low{&hardware_, 0xFFFFU, ESP_OK};
+        const esp_err_t low_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReadPorts, &low);
+
+        (void)gpio_set_level(row, 1);
+        esp_rom_delay_us(kRowSettleUs);
+        ScanContext high{&hardware_, 0xFFFFU, ESP_OK};
+        const esp_err_t high_status = executor_.Invoke(buses::I2cExecutor::Priority::kLow, ReadPorts, &high);
+
+        (void)gpio_set_direction(row, GPIO_MODE_INPUT);
+        if (low_status != ESP_OK || high_status != ESP_OK || low.status != ESP_OK || high.status != ESP_OK) {
+            continue;  // I2C error: keep the previous stable state, emit nothing
+        }
+        const uint16_t ports = static_cast<uint16_t>((low.ports ^ high.ports) & kKeyColumnMask);
         for (size_t key_index = 0; key_index < 6U; ++key_index) {
             const MatrixKeyEntry& entry = kMatrixKeys[key_index];
             if (entry.row != row) {
                 continue;
             }
-            // The column was just discharged; only a closed key charges it high.
             const bool pressed = (ports & entry.column_bit) != 0U;
             if (pressed != raw_[key_index]) {
                 raw_[key_index] = pressed;
@@ -342,8 +334,9 @@ void MatrixKeyInput::Scan() {
                                                     });
             ESP_LOGD(kTag, "%s %s", entry.name, pressed ? "down" : "up");
             if (delivered) {
-                // A guest took the key: mirror direction keys onto the Maze
-                // Evil virtual stick so movement works on a button-only board.
+                // A guest took the key: mirror direction keys onto the virtual
+                // stick the seeded touch games read (see MirrorStickTouch), so
+                // movement works on a button-only board.
                 MirrorStickTouch(entry.code, pressed);
             }
             if (delivered || chord_held_) {

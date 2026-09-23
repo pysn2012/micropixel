@@ -108,11 +108,18 @@ int32_t EspLcdTouchInput::GetInfo(micropixel_input_info_t& info) {
     info.capabilities = 0U;
     info.logical_width = width_;
     info.logical_height = height_;
-    // Button-only boards keep the touch controller unbound. Report zero touch
-    // points instead of failing: guests that query input.info at startup would
-    // otherwise trap ("input.info failed") and abort. SystemGestureRouter adds
-    // the key-event capability on top of whatever lands here.
-    info.max_touch_points = Available() ? max_touch_points_ : 0U;
+    // Button-only boards keep the touch controller unbound, but the Host still
+    // accepts injected samples from key drivers and forwards them to the
+    // running Guest, so the configured contact capacity is real and must be
+    // reported. It cannot be zero: a Guest that reads input.info with
+    // max_touch_points == 0 aborts through
+    // runtime::Panic("input.info.incompatible") - see
+    // guest/runtime/display_context.cpp - which leaves every touch-driven App
+    // Bundle (all seeded store games declare "required": ["input.touch"])
+    // showing an error or stuck on its launch screen. Failing the whole call
+    // for an absent panel is worse still: that traps as "input.info failed".
+    // SystemGestureRouter adds the key-event capability on top of this.
+    info.max_touch_points = max_touch_points_ != 0U ? max_touch_points_ : 1U;
     return MICROPIXEL_STATUS_OK;
 }
 
