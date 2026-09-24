@@ -24,26 +24,6 @@
       "note": "second jump game; declares optional input.keys (key fallback)"
     },
     {
-      "appId": "micropixel.snake",
-      "title": "Juicy Snake",
-      "releaseId": "7e55520c-b661-4209-b69c-c4b0cf96caa4",
-      "version": "0.1.0",
-      "target": "xtensa",
-      "sizeBytes": 917504,
-      "sha256": "ac439727bf9c3279a19a95ccb1e326eafdcff9ebf7013a7bc465c30df900b228",
-      "note": "Juicy Snake"
-    },
-    {
-      "appId": "micropixel.blocks",
-      "title": "Juicy Blocks",
-      "releaseId": "7e834387-efbc-421a-8050-ed976371fbf5",
-      "version": "0.1.1",
-      "target": "xtensa",
-      "sizeBytes": 589824,
-      "sha256": "5af9f634699d78fce611e52ba37095df22380775c3af45513e13e94da8850f5a",
-      "note": "Juicy Blocks"
-    },
-    {
       "appId": "micropixel.gravity-balls",
       "title": "Gravity Balls",
       "releaseId": "aa03a849-77c7-4620-a5b8-3f86c2612201",
