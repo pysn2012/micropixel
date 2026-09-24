@@ -24,16 +24,6 @@
       "note": "second jump game; declares optional input.keys (key fallback)"
     },
     {
-      "appId": "micropixel.demo",
-      "title": "SDK Demo",
-      "releaseId": "5353676f-b99e-4e2c-b2fc-125d35647147",
-      "version": "0.1.0",
-      "target": "xtensa",
-      "sizeBytes": 1048576,
-      "sha256": "3d61fadf08b780e8e833d6c3c9f35efecc6f88d44b5729cb2274da9c463c2a4c",
-      "note": "SDK Demo: exercises graphics, fonts and input"
-    },
-    {
       "appId": "micropixel.snake",
       "title": "Juicy Snake",
       "releaseId": "7e55520c-b661-4209-b69c-c4b0cf96caa4",
